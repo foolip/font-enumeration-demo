@@ -198,7 +198,7 @@
         };
 
         const grid = document.getElementById("fontGrid");
-        grid.innerHTML = "";
+        grid.replaceChildren();
         if (!text || (!options.metrics && !options.pixels)) {
           document.getElementById("count").textContent = "0";
           return;
@@ -209,7 +209,6 @@
           fallbackCache.set(f, getSignature(f, text, options.pixels));
         }
 
-        const fragment = document.createDocumentFragment();
         let count = 0;
 
         for (const fontName of FONT_LIST) {
@@ -217,13 +216,21 @@
             count++;
             const card = document.createElement("div");
             card.className = "card";
-            card.innerHTML = `<div class="card-header">${fontName}</div>
-                                     <div class="preview" style="font-family: '${fontName}', sans-serif">${text}</div>`;
-            fragment.appendChild(card);
+
+            const header = document.createElement("div");
+            header.className = "card-header";
+            header.textContent = fontName;
+
+            const preview = document.createElement("div");
+            preview.className = "preview";
+            preview.style.fontFamily = `'${fontName}', sans-serif`;
+            preview.textContent = text;
+
+            card.append(header, preview);
+            grid.appendChild(card);
           }
         }
 
-        grid.appendChild(fragment);
         document.getElementById("count").textContent = count;
       }
 
