@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Font Enumerator Demo</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Font Enumerator</h1>
+            <p>Detected <span id="count" class="stats">0</span> system fonts</p>
+        </header>
+
+        <div class="controls">
+            <div class="input-group">
+                <input type="text" id="previewText" placeholder="Type here to test fonts..." value="The quick brown fox jumps over the lazy dog.">
+            </div>
+            <div class="config-group">
+                <label title="Compare text width measurements"><input type="checkbox" id="useMetrics" checked> Metrics Check</label>
+                <label title="Compare raw pixel data (better for clones)"><input type="checkbox" id="usePixels" checked> Pixel Check</label>
+            </div>
+        </div>
+
+        <div id="loading" class="loading" style="display:none;">Scanning system fonts...</div>
+        <div id="fontGrid" class="font-grid"></div>
+    </div>
+
+    <script>
+        const FONT_LIST = [
+            // System Keywords
+            "-apple-system", "BlinkMacSystemFont", ".AppleSystemUIFont", "system-ui",
+            "ui-serif", "ui-sans-serif", "ui-monospace", "ui-rounded",
+
+            // macOS / iOS
+            "San Francisco", "Apple System", "Helvetica Neue", "Helvetica", "Lucida Grande", 
+            "Menlo", "Monaco", "Geneva", "Baskerville", "Optima", "American Typewriter",
+            "Avenir", "Avenir Next", "Charter", "Didot", "Futura", "Iowan Old Style", "Palatino",
+            "Seravek", "Superclarendon", "Times", "Verdana",
+
+            // Windows
+            "Segoe UI", "Calibri", "Cambria", "Consolas", "Constantia", "Corbel", 
+            "Franklin Gothic Medium", "Tahoma", "Trebuchet MS", "Lucida Sans Unicode",
+            "Microsoft Sans Serif", "MS Serif", "MS Sans Serif", "Segoe Print", "Segoe Script",
+            "Georgia", "Impact", "Lucida Console", "Palatino Linotype", "Sylfaen",
+
+            // Linux / Android
+            "Roboto", "Open Sans", "Ubuntu", "DejaVu Sans", "Liberation Sans", "Noto Sans",
+            "Droid Sans", "Droid Serif", "Droid Sans Mono", "Cantarell",
+
+            // Web Safe / Standard
+            "Arial", "Arial Black", "Comic Sans MS", "Courier", "Courier New", 
+            "Georgia", "Impact", "Times New Roman", "Verdana", "Webdings", "Wingdings",
+            "Symbol", "Zapf Dingbats",
+
+            // Specialized
+            "Copperplate", "Papyrus", "Herculanum", "Chalkboard", "Bradley Hand",
+            "Brush Script MT", "Snell Roundhand", "Marker Felt", "Zapfino",
+
+            // Monospaced
+            "Lucida Console", "Inconsolata", "Source Code Pro", "Fira Code", "Courier New"
+        ];
+
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const TEST_SIZE = "72px";
+
+        const pCanvas = document.createElement('canvas');
+        const pCtx = pCanvas.getContext('2d', { willReadFrequently: true });
+
+        const grid = document.getElementById('fontGrid');
+        const countEl = document.getElementById('count');
+        const loadingEl = document.getElementById('loading');
+        const previewInput = document.getElementById('previewText');
+        const useMetricsCb = document.getElementById('useMetrics');
+        const usePixelsCb = document.getElementById('usePixels');
+
+        // State to store pre-calculated baselines for the current scan
+        let baselineCache = {};
+
+        function getMetrics(text, fontStack) {
+            pCtx.font = `40px ${fontStack}`;
+            const m = pCtx.measureText(text);
+            const PADDING = 10;
+            const ascent = m.actualBoundingBoxAscent || 30;
+            const descent = m.actualBoundingBoxDescent || 10;
+            return {
+                width: Math.ceil(m.width) + (PADDING * 2),
+                height: Math.ceil(ascent + descent) + (PADDING * 2),
+                ascent: ascent,
+                padding: PADDING
+            };
+        }
+
+        function getPixels(text, fontStack, metrics) {
+            // Setting width/height resets the canvas
+            pCanvas.width = metrics.width;
+            pCanvas.height = metrics.height;
+            
+            pCtx.clearRect(0, 0, metrics.width, metrics.height);
+            pCtx.font = `40px ${fontStack}`;
+            pCtx.textBaseline = "alphabetic";
+            pCtx.fillText(text, metrics.padding, metrics.padding + metrics.ascent); 
+            return pCtx.getImageData(0, 0, metrics.width, metrics.height).data;
+        }
+
+        function isFontInstalled(fontName) {
+            const useMetrics = useMetricsCb.checked;
+            const usePixels = usePixelsCb.checked;
+            const testText = previewInput.value;
+            const fallbacks = ['serif', 'sans-serif', 'monospace'];
+            
+            for (const fallback of fallbacks) {
+                const base = baselineCache[fallback];
+                const candidateMetrics = getMetrics(testText, `"${fontName}", ${fallback}`);
+
+                // 1. Metrics Check
+                if (useMetrics) {
+                    if (candidateMetrics.width !== base.metrics.width || 
+                        candidateMetrics.height !== base.metrics.height) {
+                        return true;
+                    }
+                }
+
+                // 2. Pixel Check
+                if (usePixels) {
+                    // We only need to draw if metrics match; if they differ, it's already caught or definitely different
+                    const candidatePixels = getPixels(testText, `"${fontName}", ${fallback}`, candidateMetrics);
+                    
+                    if (candidatePixels.length !== base.pixels.length) return true;
+
+                    for (let i = 0; i < candidatePixels.length; i++) {
+                        if (candidatePixels[i] !== base.pixels[i]) return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        function updatePreview() {
+            const cards = document.querySelectorAll('.font-preview');
+            cards.forEach(card => {
+                card.textContent = previewInput.value || " ";
+            });
+        }
+
+        let debounceTimer;
+        function debouncedInit() {
+            clearTimeout(debounceTimer);
+            updatePreview();
+            
+            if (previewInput.value.trim().length === 0 || (!useMetricsCb.checked && !usePixelsCb.checked)) {
+                grid.innerHTML = '';
+                countEl.textContent = '0';
+                return;
+            }
+
+            loadingEl.style.display = 'block';
+            debounceTimer = setTimeout(init, 300);
+        }
+
+        function init() {
+            grid.innerHTML = '';
+            countEl.textContent = '0';
+            baselineCache = {};
+
+            requestAnimationFrame(() => {
+                setTimeout(() => {
+                    const testText = previewInput.value;
+                    
+                    // Pre-calculate baselines once for the entire scan
+                    ['serif', 'sans-serif', 'monospace'].forEach(f => {
+                        const m = getMetrics(testText, f);
+                        baselineCache[f] = {
+                            metrics: m,
+                            pixels: getPixels(testText, f, m)
+                        };
+                    });
+
+                    let detectedCount = 0;
+                    const fragment = document.createDocumentFragment();
+                    const uniqueFonts = [...new Set(FONT_LIST)].sort();
+
+                    uniqueFonts.forEach(font => {
+                        if (isFontInstalled(font)) {
+                            detectedCount++;
+                            const card = document.createElement('div');
+                            card.className = 'font-card';
+                            const name = document.createElement('div');
+                            name.className = 'font-name';
+                            name.textContent = font;
+                            const preview = document.createElement('div');
+                            preview.className = 'font-preview';
+                            preview.style.fontFamily = `"${font}", sans-serif`;
+                            preview.textContent = testText;
+                            card.appendChild(name);
+                            card.appendChild(preview);
+                            fragment.appendChild(card);
+                        }
+                    });
+
+                    grid.appendChild(fragment);
+                    countEl.textContent = detectedCount;
+                    loadingEl.style.display = 'none';
+                }, 10);
+            });
+        }
+
+        previewInput.addEventListener('input', debouncedInit);
+        useMetricsCb.addEventListener('change', debouncedInit);
+        usePixelsCb.addEventListener('change', debouncedInit);
+
+        init();
+    </script>
+</body>
+</html>
